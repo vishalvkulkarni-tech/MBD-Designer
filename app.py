@@ -9,53 +9,47 @@ from docx import Document
 # ==========================================
 st.set_page_config(page_title="GenAI MBD Architect", layout="wide", page_icon="⚙️")
 
-# Securely fetch API Key
-api_key = None
-if "GOOGLE_API_KEY" in st.secrets:
-    api_key = st.secrets["GOOGLE_API_KEY"]
-else:
+# Fetch API Key
+api_key = st.secrets.get("GOOGLE_API_KEY")
+if not api_key:
     api_key = st.sidebar.text_input("Enter Google Gemini API Key", type="password")
 
 if not api_key:
-    st.warning("⚠️ API Key missing. Please add `GOOGLE_API_KEY` to your Streamlit Secrets.")
+    st.error("⚠️ API Key missing. Please add `GOOGLE_API_KEY` to Streamlit Secrets.")
     st.stop()
 
 genai.configure(api_key=api_key)
 
 # ==========================================
-# 2. SMART MODEL SELECTOR (THE FIX)
+# 2. DEBUG & MODEL SELECTION (THE FIX)
 # ==========================================
-def get_working_model():
+def get_available_model():
     """
-    Tries to find a working model name to prevent 404 errors.
+    Queries the API to find a model that actually exists for your key.
     """
     try:
-        # Priority list of models to try
-        priority_models = [
-            'gemini-1.5-flash', 
-            'gemini-1.5-flash-latest', 
-            'gemini-1.5-pro', 
-            'gemini-pro' # The fallback (1.0)
-        ]
+        # Ask Google what models are available
+        models = genai.list_models()
         
-        # Get list of models available to YOUR specific API Key
-        available_models = [m.name.replace('models/', '') for m in genai.list_models()]
+        # Look for a generation model (gemini-1.5 or gemini-pro)
+        for m in models:
+            if 'generateContent' in m.supported_generation_methods:
+                if 'gemini' in m.name:
+                    return m.name # Return the full name e.g., 'models/gemini-1.5-flash'
         
-        # Find the first match
-        for model in priority_models:
-            if model in available_models:
-                return model
-                
-        # If specific match fails, just return 'gemini-pro' as a safe bet
-        return 'gemini-pro'
-        
+        return None
     except Exception as e:
-        # If listing fails (permissions), blindly try standard flash
-        return 'gemini-1.5-flash'
+        st.error(f"API Connection Failed: {e}")
+        return None
 
-# Store the working model in session state so we don't check every time
+# Find a working model immediately
 if 'active_model' not in st.session_state:
-    st.session_state['active_model'] = get_working_model()
+    found_model = get_available_model()
+    if found_model:
+        st.session_state['active_model'] = found_model
+    else:
+        st.error("❌ No Gemini models found! Please check if 'Generative Language API' is enabled in Google Cloud Console.")
+        st.stop()
 
 st.sidebar.success(f"✅ Connected to: {st.session_state['active_model']}")
 
@@ -138,7 +132,7 @@ def json_to_matlab(data):
     return "\n".join(lines)
 
 # ==========================================
-# 5. AI ENGINE (Using Selected Model)
+# 5. AI ENGINE
 # ==========================================
 SYSTEM_PROMPT = """
 You are a Senior MBD Architect. 
@@ -156,17 +150,14 @@ JSON SCHEMA:
 
 def get_ai_response(user_input):
     try:
-        # Use the auto-detected model from session state
         model_name = st.session_state['active_model']
         model = genai.GenerativeModel(model_name)
-        
         full_prompt = SYSTEM_PROMPT + "\n\nUSER INPUT DATA:\n" + user_input
         response = model.generate_content(full_prompt)
-        
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(clean_text)
     except Exception as e:
-        st.error(f"AI Error ({model_name}): {str(e)}")
+        st.error(f"AI Error: {str(e)}")
         return None
 
 # ==========================================
