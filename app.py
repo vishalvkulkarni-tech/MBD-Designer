@@ -1,7 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
 import json
-import io
 from pypdf import PdfReader
 from docx import Document
 
@@ -24,13 +23,17 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ==========================================
-# 2. FILE READING UTILITIES (New Feature)
+# 2. UNIVERSAL FILE READER
 # ==========================================
 def read_file_content(uploaded_file):
-    """Extracts text from PDF, DOCX, or TXT/C/CPP files."""
+    """
+    Smartly extracts text from ANY supported file type.
+    """
     try:
+        # Get extension (lowercase)
         file_ext = uploaded_file.name.split('.')[-1].lower()
         
+        # 1. Handle PDF
         if file_ext == 'pdf':
             reader = PdfReader(uploaded_file)
             text = ""
@@ -38,44 +41,51 @@ def read_file_content(uploaded_file):
                 text += page.extract_text() + "\n"
             return text
             
+        # 2. Handle Word Docs
         elif file_ext in ['docx', 'doc']:
             doc = Document(uploaded_file)
             text = "\n".join([para.text for para in doc.paragraphs])
             return text
             
+        # 3. Handle Text/Code (c, cpp, h, txt, md, json, etc.)
         else:
-            # Assume text based (c, cpp, h, txt, md)
-            return uploaded_file.getvalue().decode("utf-8")
+            # decode("utf-8") converts binary bytes to string
+            # errors="ignore" skips weird characters instead of crashing
+            return uploaded_file.getvalue().decode("utf-8", errors="ignore")
             
     except Exception as e:
         return f"Error reading file {uploaded_file.name}: {str(e)}"
 
 # ==========================================
-# 3. PARSERS (The "Translator" Logic)
+# 3. PARSERS (Translator Logic)
 # ==========================================
 def json_to_mermaid(data):
     mermaid_lines = ["graph LR"]
+    
+    # Nodes
     for comp in data.get('components', []):
         name = comp['name']
         ctype = comp['type']
+        
         if ctype == "Subsystem":
-            line = f"    {name}(({name}<br/>Subsystem))"
+            mermaid_lines.append(f"    {name}(({name}<br/>Subsystem))")
         elif ctype == "ModelReference":
-            line = f"    {name}[[{name}<br/>ModelRef]]"
+            mermaid_lines.append(f"    {name}[[{name}<br/>ModelRef]]")
         elif ctype == "StateflowChart":
-            line = f"    {name}{{ {name}<br/>Stateflow }}"
+            mermaid_lines.append(f"    {name}{{ {name}<br/>Stateflow }}")
         elif ctype == "Inport":
-            line = f"    {name}([{name} >])"
+            mermaid_lines.append(f"    {name}([{name} >])")
         elif ctype == "Outport":
-            line = f"    {name}(([> {name}]))"
+            mermaid_lines.append(f"    {name}(([> {name}]))")
         else:
-            line = f"    {name}[{name}]"
-        mermaid_lines.append(line)
+            mermaid_lines.append(f"    {name}[{name}]")
 
+    # Connections
     for conn in data.get('connections', []):
         src = conn['source'].split('/')[0] 
         dst = conn['destination'].split('/')[0]
         mermaid_lines.append(f"    {src} --> {dst}")
+
     return "\n".join(mermaid_lines)
 
 def json_to_matlab(data):
@@ -99,18 +109,23 @@ def json_to_matlab(data):
         "Scope": "simulink/Sinks/Scope"
     }
 
+    # Add Blocks
     for comp in data.get('components', []):
         blk_type = comp['type']
         blk_name = comp['name'].replace(" ", "_")
         lib_path = lib_map.get(blk_type, "built-in/Subsystem")
+        
         lines.append(f"add_block('{lib_path}', '{model_name}/{blk_name}');")
+        
         if 'parameters' in comp:
             for k, v in comp['parameters'].items():
                 lines.append(f"set_param('{model_name}/{blk_name}', '{k}', '{v}');")
+        
         if 'position' in comp:
             pos = str(comp['position']).replace('[', '').replace(']', '')
             lines.append(f"set_param('{model_name}/{blk_name}', 'Position', [{pos}]);")
 
+    # Add Lines
     lines.append("% Connecting Blocks...")
     for conn in data.get('connections', []):
         src = conn['source'].replace(" ", "_")
@@ -121,12 +136,15 @@ def json_to_matlab(data):
     return "\n".join(lines)
 
 # ==========================================
-# 4. AI ENGINE (The Brain)
+# 4. AI ENGINE
 # ==========================================
 SYSTEM_PROMPT = """
 You are a Senior MBD Architect. 
-Your task: Analyze the input (C/C++ Code OR Requirements Text) and design a valid Simulink/Stateflow architecture.
-OUTPUT FORMAT: ONLY output a valid JSON object. No markdown.
+Your task: Analyze the input data (which may be C/C++ Code, PDF Requirements, or a mix) and design a valid Simulink/Stateflow architecture.
+
+OUTPUT FORMAT:
+You must ONLY output a valid JSON object. Do not include markdown formatting.
+
 JSON SCHEMA:
 {
   "system_name": "String (No Spaces)",
@@ -139,16 +157,13 @@ JSON SCHEMA:
 
 def get_ai_response(user_input):
     try:
-        # FIX: Switched to 'gemini-1.5-flash' which is widely available on free tier
         model = genai.GenerativeModel('gemini-1.5-flash')
-        
         full_prompt = SYSTEM_PROMPT + "\n\nUSER INPUT DATA:\n" + user_input
         response = model.generate_content(full_prompt)
         
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(clean_text)
     except Exception as e:
-        # Fallback debug info
         st.error(f"AI Error: {str(e)}")
         return None
 
@@ -156,39 +171,36 @@ def get_ai_response(user_input):
 # 5. FRONTEND UI
 # ==========================================
 st.title("🚀 GenAI MBD Architect")
+st.markdown("Convert **Requirements** (PDF/Doc) or **Legacy Code** (C/C++) into Simulink Models.")
 
-tab1, tab2 = st.tabs(["✨ AI Generator", "📂 Re-Use / Viewer"])
+tab1, tab2 = st.tabs(["✨ AI Generator", "📂 Viewer Mode"])
 
+# --- TAB 1: UNIFIED INPUT ---
 with tab1:
-    st.info("Upload inputs to generate architecture.")
+    st.info("Upload any combination of Requirement Docs and Code files.")
     
-    # FIX: Combined inputs into one cleaner interface
-    input_method = st.radio("Select Input Source:", ["Upload C/C++ Code", "Upload Requirements (PDF/Docx/Txt)"])
+    # SINGLE UPLOADER FOR EVERYTHING
+    uploaded_files = st.file_uploader(
+        "Upload Files", 
+        type=['c', 'cpp', 'h', 'hpp', 'txt', 'pdf', 'docx', 'doc', 'md'], 
+        accept_multiple_files=True
+    )
     
-    user_data = ""
-    
-    if input_method == "Upload C/C++ Code":
-        files = st.file_uploader("Upload .c, .cpp, .h files", accept_multiple_files=True)
-        if files:
-            for f in files:
-                text = read_file_content(f)
-                user_data += f"\n// FILE: {f.name}\n" + text
-            st.success(f"Loaded {len(files)} code files.")
-            
-    else:
-        # FIX: Changed from Text Area to File Uploader
-        req_files = st.file_uploader("Upload Requirements", type=['pdf', 'docx', 'txt', 'md'], accept_multiple_files=True)
-        if req_files:
-            for f in req_files:
-                text = read_file_content(f)
-                user_data += f"\n--- REQUIREMENT DOC: {f.name} ---\n" + text
-            st.success(f"Loaded {len(req_files)} requirement documents.")
-
     if st.button("Generate Architecture ⚡"):
-        if not user_data:
-            st.error("Please provide input data first!")
+        if not uploaded_files:
+            st.error("Please upload at least one file!")
         else:
-            with st.spinner("AI is architecting the solution... (Using gemini-1.5-flash)"):
+            user_data = ""
+            
+            # Progress bar for multiple files
+            progress_bar = st.progress(0)
+            
+            for i, f in enumerate(uploaded_files):
+                text = read_file_content(f)
+                user_data += f"\n// --- START FILE: {f.name} ---\n{text}\n// --- END FILE ---\n"
+                progress_bar.progress((i + 1) / len(uploaded_files))
+            
+            with st.spinner("AI is analyzing all files & designing architecture..."):
                 json_result = get_ai_response(user_data)
                 
                 if json_result:
@@ -197,6 +209,7 @@ with tab1:
                     json_str = json.dumps(json_result, indent=2)
                     
                     st.success("Architecture Designed Successfully!")
+                    
                     st.subheader("1. Visual Architecture")
                     st.markdown(f"```mermaid\n{mermaid_code}\n```")
                     
@@ -206,15 +219,18 @@ with tab1:
                     c2.download_button("📥 Download .m Script", matlab_code, "build_model.m", "text/plain")
                     c3.download_button("📥 Download Diagram", mermaid_code, "diagram.mmd", "text/plain")
 
+# --- TAB 2: VIEWER ---
 with tab2:
     st.info("Viewer Mode: No AI required.")
     uploaded_json = st.file_uploader("Upload .json Model File", type=["json"])
+    
     if uploaded_json:
         try:
             data = json.load(uploaded_json)
             m_code = json_to_mermaid(data)
             mat_code = json_to_matlab(data)
-            st.success("Model Loaded!")
+            
             st.markdown(f"```mermaid\n{m_code}\n```")
+            st.download_button("📥 Download .m Script", mat_code, "build_model.m", "text/plain")
         except Exception as e:
             st.error(f"Invalid JSON: {e}")
