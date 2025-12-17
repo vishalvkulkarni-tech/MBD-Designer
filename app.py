@@ -2,6 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import json
 import base64
+import re
 from pypdf import PdfReader
 from docx import Document
 
@@ -22,7 +23,7 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ==========================================
-# 2. DYNAMIC MODEL SELECTOR (THE 404 FIX)
+# 2. DYNAMIC MODEL SELECTOR
 # ==========================================
 def get_working_model():
     """
@@ -30,30 +31,20 @@ def get_working_model():
     that supports content generation. This prevents 404 errors.
     """
     try:
-        # Get all models
         models = list(genai.list_models())
-        
-        # Priority: Try to find Flash or Pro first (newer is better)
-        # But if not found, accept ANY model that works.
         priority_keywords = ['flash', 'pro', 'gemini']
-        
-        # Filter for models that can generate content
         generation_models = [m for m in models if 'generateContent' in m.supported_generation_methods]
         
         if not generation_models:
             return None
 
-        # Try to find a priority model
         for keyword in priority_keywords:
             for m in generation_models:
                 if keyword in m.name:
                     return m.name
-        
-        # Fallback: Just take the first one that exists
         return generation_models[0].name
 
     except Exception as e:
-        # If listing fails, fallback to the safest old default
         return 'models/gemini-pro'
 
 # Initialize Model on App Start
@@ -74,7 +65,6 @@ st.sidebar.success(f"✅ Connected to: {st.session_state['active_model']}")
 def render_mermaid_ui(mermaid_code):
     """
     Renders diagram as a static image via mermaid.ink.
-    Fixes the 'blank white box' issue.
     """
     try:
         graphbytes = mermaid_code.encode("utf8")
@@ -108,28 +98,47 @@ def read_file_content(uploaded_file):
 # ==========================================
 # 5. PARSERS (MATLAB & MERMAID)
 # ==========================================
+def sanitize_id(text):
+    """
+    Removes spaces and special characters to create a valid Mermaid ID.
+    Example: "Input Signal" -> "InputSignal"
+    """
+    return re.sub(r'[^a-zA-Z0-9]', '', text)
+
 def json_to_mermaid(data):
     mermaid_lines = ["graph LR"]
+    
+    # Nodes
     for comp in data.get('components', []):
-        name = comp['name']
+        raw_name = comp['name']
+        safe_id = sanitize_id(raw_name)  # Clean ID for internal use
         ctype = comp['type']
+        
+        # Format: SafeID["Readable Name"]
         if ctype == "Subsystem":
-            mermaid_lines.append(f"    {name}(({name}<br/>Subsystem))")
+            mermaid_lines.append(f'    {safe_id}(("{raw_name}<br/>Subsystem"))')
         elif ctype == "ModelReference":
-            mermaid_lines.append(f"    {name}[[{name}<br/>ModelRef]]")
+            mermaid_lines.append(f'    {safe_id}[["{raw_name}<br/>ModelRef"]]')
         elif ctype == "StateflowChart":
-            mermaid_lines.append(f"    {name}{{ {name}<br/>Stateflow }}")
+            mermaid_lines.append(f'    {safe_id}{{ "{raw_name}<br/>Stateflow" }}')
         elif ctype == "Inport":
-            mermaid_lines.append(f"    {name}([{name} >])")
+            mermaid_lines.append(f'    {safe_id}(["{raw_name} >"])')
         elif ctype == "Outport":
-            mermaid_lines.append(f"    {name}(([> {name}]))")
+            mermaid_lines.append(f'    {safe_id}((["> {raw_name}"]))')
         else:
-            mermaid_lines.append(f"    {name}[{name}]")
+            mermaid_lines.append(f'    {safe_id}["{raw_name}"]')
 
+    # Connections
     for conn in data.get('connections', []):
-        src = conn['source'].split('/')[0] 
-        dst = conn['destination'].split('/')[0]
-        mermaid_lines.append(f"    {src} --> {dst}")
+        # Handle "Block/Port" format by splitting
+        src_raw = conn['source'].split('/')[0]
+        dst_raw = conn['destination'].split('/')[0]
+        
+        src_safe = sanitize_id(src_raw)
+        dst_safe = sanitize_id(dst_raw)
+        
+        mermaid_lines.append(f"    {src_safe} --> {dst_safe}")
+
     return "\n".join(mermaid_lines)
 
 def json_to_matlab(data):
