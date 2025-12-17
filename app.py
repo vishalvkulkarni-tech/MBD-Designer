@@ -1,10 +1,9 @@
 import streamlit as st
 import google.generativeai as genai
 import json
+import base64
 from pypdf import PdfReader
 from docx import Document
-# NEW IMPORT: Dedicated Mermaid Renderer
-from streamlit_mermaid import st_mermaid
 
 # ==========================================
 # 1. SETUP & SECURITY
@@ -23,27 +22,39 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ==========================================
-# 2. DEBUG & MODEL SELECTION
+# 2. MODEL SELECTION
 # ==========================================
-def get_available_model():
-    try:
-        models = genai.list_models()
-        for m in models:
-            if 'generateContent' in m.supported_generation_methods:
-                if 'gemini' in m.name:
-                    return m.name
-        return None
-    except Exception:
-        return None
-
 if 'active_model' not in st.session_state:
-    found_model = get_available_model()
-    st.session_state['active_model'] = found_model if found_model else "models/gemini-1.5-flash"
+    # Simple fallback logic without complex API calls
+    st.session_state['active_model'] = 'models/gemini-1.5-flash'
 
 st.sidebar.success(f"✅ Connected to: {st.session_state['active_model']}")
 
 # ==========================================
-# 3. UNIVERSAL FILE READER
+# 3. HELPER: MERMAID RENDERER (THE FIX)
+# ==========================================
+def render_mermaid_ui(mermaid_code):
+    """
+    Renders the Mermaid diagram as a static image using mermaid.ink API.
+    This is much more reliable than JS components.
+    """
+    try:
+        # 1. Show the Diagram
+        graphbytes = mermaid_code.encode("utf8")
+        base64_bytes = base64.b64encode(graphbytes)
+        base64_string = base64_bytes.decode("ascii")
+        url = "https://mermaid.ink/img/" + base64_string
+        st.image(url, caption="System Architecture", use_container_width=True)
+        
+    except Exception:
+        st.warning("Could not render image. Showing code instead.")
+    
+    # 2. Always show the code in an expander (Backup)
+    with st.expander("🔍 View Raw Diagram Code"):
+        st.code(mermaid_code, language='mermaid')
+
+# ==========================================
+# 4. FILE READERS
 # ==========================================
 def read_file_content(uploaded_file):
     try:
@@ -60,14 +71,14 @@ def read_file_content(uploaded_file):
         return f"Error reading {uploaded_file.name}: {e}"
 
 # ==========================================
-# 4. PARSERS (Translator Logic)
+# 5. PARSERS
 # ==========================================
 def json_to_mermaid(data):
     mermaid_lines = ["graph LR"]
+    # Nodes
     for comp in data.get('components', []):
         name = comp['name']
         ctype = comp['type']
-        
         if ctype == "Subsystem":
             mermaid_lines.append(f"    {name}(({name}<br/>Subsystem))")
         elif ctype == "ModelReference":
@@ -80,7 +91,7 @@ def json_to_mermaid(data):
             mermaid_lines.append(f"    {name}(([> {name}]))")
         else:
             mermaid_lines.append(f"    {name}[{name}]")
-
+    # Connections
     for conn in data.get('connections', []):
         src = conn['source'].split('/')[0] 
         dst = conn['destination'].split('/')[0]
@@ -121,7 +132,7 @@ def json_to_matlab(data):
     return "\n".join(lines)
 
 # ==========================================
-# 5. AI ENGINE
+# 6. AI ENGINE
 # ==========================================
 SYSTEM_PROMPT = """
 You are a Senior MBD Architect. 
@@ -150,7 +161,7 @@ def get_ai_response(user_input):
         return None
 
 # ==========================================
-# 6. FRONTEND UI
+# 7. FRONTEND UI
 # ==========================================
 st.title("🚀 GenAI MBD Architect")
 st.markdown("Convert **Requirements** (PDF/Doc) or **Legacy Code** (C/C++) into Simulink Models.")
@@ -183,11 +194,8 @@ with tab1:
                     st.success("Success!")
                     st.subheader("Visual Architecture")
                     
-                    # FIX: Using proper Mermaid Renderer
-                    try:
-                        st_mermaid(mermaid_code, height=500)
-                    except Exception:
-                        st.code(mermaid_code) # Fallback if rendering fails
+                    # USE THE NEW ROBUST RENDERER
+                    render_mermaid_ui(mermaid_code)
                     
                     c1, c2, c3 = st.columns(3)
                     c1.download_button("📥 Download JSON", json_str, "mbd_model.json", "application/json")
@@ -202,11 +210,8 @@ with tab2:
             m_code = json_to_mermaid(data)
             mat_code = json_to_matlab(data)
             
-            # FIX: Using proper Mermaid Renderer
-            try:
-                st_mermaid(m_code, height=500)
-            except Exception:
-                st.code(m_code)
+            # USE THE NEW ROBUST RENDERER
+            render_mermaid_ui(m_code)
             
             st.download_button("📥 Download .m Script", mat_code, "build_model.m", "text/plain")
         except Exception as e:
