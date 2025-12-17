@@ -22,35 +22,70 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ==========================================
-# 2. MODEL SELECTION
+# 2. DYNAMIC MODEL SELECTOR (THE 404 FIX)
 # ==========================================
+def get_working_model():
+    """
+    Queries Google API for a list of available models and returns the first one
+    that supports content generation. This prevents 404 errors.
+    """
+    try:
+        # Get all models
+        models = list(genai.list_models())
+        
+        # Priority: Try to find Flash or Pro first (newer is better)
+        # But if not found, accept ANY model that works.
+        priority_keywords = ['flash', 'pro', 'gemini']
+        
+        # Filter for models that can generate content
+        generation_models = [m for m in models if 'generateContent' in m.supported_generation_methods]
+        
+        if not generation_models:
+            return None
+
+        # Try to find a priority model
+        for keyword in priority_keywords:
+            for m in generation_models:
+                if keyword in m.name:
+                    return m.name
+        
+        # Fallback: Just take the first one that exists
+        return generation_models[0].name
+
+    except Exception as e:
+        # If listing fails, fallback to the safest old default
+        return 'models/gemini-pro'
+
+# Initialize Model on App Start
 if 'active_model' not in st.session_state:
-    # Simple fallback logic without complex API calls
-    st.session_state['active_model'] = 'models/gemini-1.5-flash'
+    with st.spinner("Connecting to Google AI..."):
+        model_name = get_working_model()
+        if model_name:
+            st.session_state['active_model'] = model_name
+        else:
+            st.error("❌ Critical Error: No available models found for this API Key.")
+            st.stop()
 
 st.sidebar.success(f"✅ Connected to: {st.session_state['active_model']}")
 
 # ==========================================
-# 3. HELPER: MERMAID RENDERER (THE FIX)
+# 3. HELPER: MERMAID IMAGE RENDERER
 # ==========================================
 def render_mermaid_ui(mermaid_code):
     """
-    Renders the Mermaid diagram as a static image using mermaid.ink API.
-    This is much more reliable than JS components.
+    Renders diagram as a static image via mermaid.ink.
+    Fixes the 'blank white box' issue.
     """
     try:
-        # 1. Show the Diagram
         graphbytes = mermaid_code.encode("utf8")
         base64_bytes = base64.b64encode(graphbytes)
         base64_string = base64_bytes.decode("ascii")
         url = "https://mermaid.ink/img/" + base64_string
         st.image(url, caption="System Architecture", use_container_width=True)
-        
     except Exception:
-        st.warning("Could not render image. Showing code instead.")
+        st.warning("Could not render visual diagram. Please view the code below.")
     
-    # 2. Always show the code in an expander (Backup)
-    with st.expander("🔍 View Raw Diagram Code"):
+    with st.expander("🔍 View Diagram Code"):
         st.code(mermaid_code, language='mermaid')
 
 # ==========================================
@@ -71,11 +106,10 @@ def read_file_content(uploaded_file):
         return f"Error reading {uploaded_file.name}: {e}"
 
 # ==========================================
-# 5. PARSERS
+# 5. PARSERS (MATLAB & MERMAID)
 # ==========================================
 def json_to_mermaid(data):
     mermaid_lines = ["graph LR"]
-    # Nodes
     for comp in data.get('components', []):
         name = comp['name']
         ctype = comp['type']
@@ -91,7 +125,7 @@ def json_to_mermaid(data):
             mermaid_lines.append(f"    {name}(([> {name}]))")
         else:
             mermaid_lines.append(f"    {name}[{name}]")
-    # Connections
+
     for conn in data.get('connections', []):
         src = conn['source'].split('/')[0] 
         dst = conn['destination'].split('/')[0]
@@ -192,11 +226,11 @@ with tab1:
                     json_str = json.dumps(json_result, indent=2)
                     
                     st.success("Success!")
-                    st.subheader("Visual Architecture")
                     
-                    # USE THE NEW ROBUST RENDERER
+                    st.subheader("1. Visual Architecture")
                     render_mermaid_ui(mermaid_code)
                     
+                    st.subheader("2. Export Artifacts")
                     c1, c2, c3 = st.columns(3)
                     c1.download_button("📥 Download JSON", json_str, "mbd_model.json", "application/json")
                     c2.download_button("📥 Download .m Script", matlab_code, "build_model.m", "text/plain")
@@ -210,7 +244,6 @@ with tab2:
             m_code = json_to_mermaid(data)
             mat_code = json_to_matlab(data)
             
-            # USE THE NEW ROBUST RENDERER
             render_mermaid_ui(m_code)
             
             st.download_button("📥 Download .m Script", mat_code, "build_model.m", "text/plain")
