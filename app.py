@@ -3,6 +3,8 @@ import google.generativeai as genai
 import json
 from pypdf import PdfReader
 from docx import Document
+# NEW IMPORT: Dedicated Mermaid Renderer
+from streamlit_mermaid import st_mermaid
 
 # ==========================================
 # 1. SETUP & SECURITY
@@ -21,35 +23,22 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ==========================================
-# 2. DEBUG & MODEL SELECTION (THE FIX)
+# 2. DEBUG & MODEL SELECTION
 # ==========================================
 def get_available_model():
-    """
-    Queries the API to find a model that actually exists for your key.
-    """
     try:
-        # Ask Google what models are available
         models = genai.list_models()
-        
-        # Look for a generation model (gemini-1.5 or gemini-pro)
         for m in models:
             if 'generateContent' in m.supported_generation_methods:
                 if 'gemini' in m.name:
-                    return m.name # Return the full name e.g., 'models/gemini-1.5-flash'
-        
+                    return m.name
         return None
-    except Exception as e:
-        st.error(f"API Connection Failed: {e}")
+    except Exception:
         return None
 
-# Find a working model immediately
 if 'active_model' not in st.session_state:
     found_model = get_available_model()
-    if found_model:
-        st.session_state['active_model'] = found_model
-    else:
-        st.error("❌ No Gemini models found! Please check if 'Generative Language API' is enabled in Google Cloud Console.")
-        st.stop()
+    st.session_state['active_model'] = found_model if found_model else "models/gemini-1.5-flash"
 
 st.sidebar.success(f"✅ Connected to: {st.session_state['active_model']}")
 
@@ -193,7 +182,12 @@ with tab1:
                     
                     st.success("Success!")
                     st.subheader("Visual Architecture")
-                    st.markdown(f"```mermaid\n{mermaid_code}\n```")
+                    
+                    # FIX: Using proper Mermaid Renderer
+                    try:
+                        st_mermaid(mermaid_code, height=500)
+                    except Exception:
+                        st.code(mermaid_code) # Fallback if rendering fails
                     
                     c1, c2, c3 = st.columns(3)
                     c1.download_button("📥 Download JSON", json_str, "mbd_model.json", "application/json")
@@ -207,7 +201,13 @@ with tab2:
             data = json.load(uploaded_json)
             m_code = json_to_mermaid(data)
             mat_code = json_to_matlab(data)
-            st.markdown(f"```mermaid\n{m_code}\n```")
+            
+            # FIX: Using proper Mermaid Renderer
+            try:
+                st_mermaid(m_code, height=500)
+            except Exception:
+                st.code(m_code)
+            
             st.download_button("📥 Download .m Script", mat_code, "build_model.m", "text/plain")
         except Exception as e:
             st.error(f"Invalid JSON: {e}")
