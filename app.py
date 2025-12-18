@@ -83,13 +83,19 @@ def render_mermaid_ui(mermaid_code):
         if not mermaid_code.startswith('graph'):
             st.warning("⚠️ Mermaid code may be malformed (missing 'graph' declaration)")
         
+        # Check for minimum content
+        lines = [l.strip() for l in mermaid_code.split('\n') if l.strip()]
+        if len(lines) < 2:
+            st.error("❌ Mermaid diagram has no content (only header line)")
+            st.code(mermaid_code, language='mermaid')
+            return
+        
         graphbytes = mermaid_code.encode("utf8")
         base64_bytes = base64.b64encode(graphbytes)
         base64_string = base64_bytes.decode("ascii")
         url = "https://mermaid.ink/img/" + base64_string
         
         st.image(url, caption="System Architecture", use_container_width=True)
-        st.success("✅ Diagram rendered successfully")
         
     except Exception as e:
         st.error(f"❌ Could not render visual diagram: {str(e)}")
@@ -427,60 +433,264 @@ def json_to_matlab(data):
 # ==========================================
 # 6. AI ENGINE
 # ==========================================
-SYSTEM_PROMPT = """
-You are a Senior MBD (Model-Based Design) Architect specializing in Simulink/Stateflow systems.
 
-TASK: Analyze the input (Code/Requirements) and design a valid Simulink/Stateflow architecture.
+# Prompt for Code Files (C/C++/H)
+CODE_ANALYSIS_PROMPT = """
+You are a Senior MBD (Model-Based Design) Architect specializing in reverse-engineering C/C++ code into Simulink/Stateflow architectures.
 
-CRITICAL REQUIREMENTS:
-1. OUTPUT ONLY VALID JSON - No markdown, no code blocks, no explanations
-2. Use EXACT schema below
-3. Component names must be unique and descriptive
-4. Connections must reference existing component names exactly
-5. Include appropriate block types for the functionality
+CRITICAL TASK: 
+Analyze the C/C++ code files and extract the COMPLETE Simulink/Stateflow architecture with ALL components and data flows.
 
-JSON SCHEMA (MANDATORY):
+OUTPUT RULES:
+1. ONLY output valid JSON - NO markdown, NO code blocks, NO explanations
+2. MUST identify MINIMUM 5-10 components (extract everything meaningful)
+3. ALL components MUST have proper connections showing data flow
+4. Use actual function/variable names from the code
+
+========================================
+HOW TO ANALYZE C/C++ CODE:
+========================================
+- Functions → Subsystems or Gain blocks
+- Global variables → Inports/Outports
+- Math operations (+, -, *, /) → Sum/Product/Gain
+- if/switch statements → Switch blocks or StateflowChart
+- Loops/state machines → StateflowChart
+- Constants/defines → Constant blocks
+- Function parameters → Inports
+- Return values → Outports
+- Integration/accumulation → Integrator blocks
+
+CODE ANALYSIS EXAMPLES:
+
+Example 1 - Simple Function:
+```c
+float calculate_speed(float input, float gain) {
+    return input * gain;
+}
+```
+EXTRACT:
 {
-  "system_name": "String (No Spaces, underscore_separated)",
+  "system_name": "Speed_Calculator",
+  "components": [
+    {"name": "SpeedInput", "type": "Inport"},
+    {"name": "GainValue", "type": "Constant", "parameters": {"Value": "gain"}},
+    {"name": "Multiply", "type": "Product"},
+    {"name": "SpeedOutput", "type": "Outport"}
+  ],
+  "connections": [
+    {"source": "SpeedInput/1", "destination": "Multiply/1"},
+    {"source": "GainValue/1", "destination": "Multiply/2"},
+    {"source": "Multiply/1", "destination": "SpeedOutput/1"}
+  ]
+}
+
+Example 2 - PID Controller:
+```c
+float pid_control(float error) {
+    static float integral = 0;
+    float Kp = 1.0, Ki = 0.1, Kd = 0.01;
+    float derivative = error - prev_error;
+    integral += error;
+    return Kp*error + Ki*integral + Kd*derivative;
+}
+```
+EXTRACT:
+{
+  "system_name": "PID_Controller",
+  "components": [
+    {"name": "ErrorInput", "type": "Inport"},
+    {"name": "Kp_Gain", "type": "Gain", "parameters": {"Gain": "1.0"}},
+    {"name": "Ki_Gain", "type": "Gain", "parameters": {"Gain": "0.1"}},
+    {"name": "Kd_Gain", "type": "Gain", "parameters": {"Gain": "0.01"}},
+    {"name": "Integrator", "type": "Integrator"},
+    {"name": "Derivative", "type": "Subsystem"},
+    {"name": "Sum_P_I_D", "type": "Sum"},
+    {"name": "ControlOutput", "type": "Outport"}
+  ],
+  "connections": [
+    {"source": "ErrorInput/1", "destination": "Kp_Gain/1"},
+    {"source": "ErrorInput/1", "destination": "Integrator/1"},
+    {"source": "ErrorInput/1", "destination": "Derivative/1"},
+    {"source": "Kp_Gain/1", "destination": "Sum_P_I_D/1"},
+    {"source": "Integrator/1", "destination": "Ki_Gain/1"},
+    {"source": "Ki_Gain/1", "destination": "Sum_P_I_D/2"},
+    {"source": "Derivative/1", "destination": "Kd_Gain/1"},
+    {"source": "Kd_Gain/1", "destination": "Sum_P_I_D/3"},
+    {"source": "Sum_P_I_D/1", "destination": "ControlOutput/1"}
+  ]
+}
+
+MANDATORY JSON SCHEMA:
+{
+  "system_name": "Descriptive_Name_From_Code",
   "components": [
     {
-      "name": "String (Unique, descriptive)",
-      "type": "String (MUST be one of: Inport|Outport|Gain|Sum|Integrator|Subsystem|StateflowChart|ModelReference|Constant|Scope|Product|Switch|Saturation)",
+      "name": "ComponentName",
+      "type": "Inport|Outport|Gain|Sum|Integrator|Subsystem|StateflowChart|Constant|Scope|Product|Switch|Saturation",
       "parameters": {"Key": "Value"},
       "position": [left, top, right, bottom]
     }
   ],
   "connections": [
     {
-      "source": "ComponentName/PortNumber",
-      "destination": "ComponentName/PortNumber",
-      "label": "Optional signal name"
+      "source": "SourceComponent/1",
+      "destination": "DestinationComponent/1",
+      "label": "signal_name"
     }
   ]
 }
 
-BLOCK TYPE GUIDELINES:
-- Inport/Outport: System inputs/outputs
-- Gain/Sum/Product: Math operations
-- Integrator: Continuous dynamics
-- Subsystem: Grouped functionality
-- StateflowChart: State machines/logic
-- Constant/Scope: Sources/sinks
+BLOCK TYPE MAPPING:
+- Input parameters/globals → Inport
+- Output/return values → Outport
+- Multiply/divide/scale → Gain or Product
+- Add/subtract → Sum
+- Accumulation/integration → Integrator
+- Complex functions → Subsystem
+- State machines/switches → StateflowChart
+- Fixed values/defines → Constant
+- Limit/clamp → Saturation
+- Conditional logic → Switch
 
-EXAMPLE:
-{
-  "system_name": "PID_Controller",
-  "components": [
-    {"name": "SetPoint", "type": "Inport", "position": [30, 100, 60, 120]},
-    {"name": "ProportionalGain", "type": "Gain", "parameters": {"Gain": "10"}, "position": [120, 100, 150, 130]},
-    {"name": "Output", "type": "Outport", "position": [240, 100, 270, 120]}
+CRITICAL INSTRUCTIONS:
+- Analyze ALL files together to understand complete system
+- Extract EVERY function as a component
+- Map ALL data flows between functions
+- Identify mathematical operations explicitly
+- Create hierarchy with Subsystems for grouped functions
+- Use actual names from code (function names, variable names)
+
+MINIMUM OUTPUT: 5-10 components with complete connections showing data flow through the system!
+"""
+
+# Prompt for Requirements Documents (PDF/Word/Text)
+REQUIREMENTS_PROMPT = """
+You are a Senior MBD (Model-Based Design) Architect specializing in converting requirement documents into Simulink/Stateflow architectures.
+
+CRITICAL TASK: 
+Analyze the requirement document and design a complete Simulink/Stateflow architecture that implements ALL specified requirements.
+
+OUTPUT RULES:
+1. ONLY output valid JSON - NO markdown, NO code blocks, NO explanations
+2. MUST identify MINIMUM 4-8 components covering all requirements
+3. ALL components MUST have connections showing signal flow
+4. Use descriptive names reflecting the requirements
+
+========================================
+HOW TO ANALYZE REQUIREMENTS:
+========================================
+- System inputs mentioned → Inport
+- System outputs mentioned → Outport
+- Control algorithms (PID, feedback, etc.) → Subsystem
+- Mathematical operations mentioned → Gain/Sum/Product/Integrator
+- State machines/modes/conditions → StateflowChart
+- Sensors/actuators mentioned → Inport/Outport
+- Data processing/filtering → Subsystem
+- Limit/saturation requirements → Saturation
+- Conditional logic → Switch or input_type='requirements', max_retries=3):
+    """
+    Enhanced AI response handler with retry logic and prompt selection based on input type.
+    """
+    model_name = st.session_state.get('active_model')
+    
+    # Select appropriate prompt based on input type
+    if input_type == 'code':
+        system_prompt = CODE_ANALYSIS_PROMPT
+        if st.session_state.get('debug_mode'):
+            st.info("🔧 Using CODE analysis prompt")
+    else:
+        system_prompt = REQUIREMENTS_PROMPT
+        if st.session_state.get('debug_mode'):
+            st.info("📋 Using REQUIREMENTS analysis prompt")
+    
+    for attempt in range(max_retries):
+        try:
+            model = genai.GenerativeModel(
+                model_name,
+                generation_config={
+                    "temperature": 0.3,  # Lower temperature for more consistent JSON
+                    "top_p": 0.95,
+                    "top_k": 40,
+                }
+            )
+            
+            full_prompt = system_prompt + "\n\nUSER INPUT DATA:\n" + user_input[:15000]  # Increased limit for code files
+    {"name": "DerivativeGain", "type": "Gain", "parameters": {"Gain": "0.01"}},
+    {"name": "PID_Sum", "type": "Sum", "parameters": {"Inputs": "+++"}},
+    {"name": "MotorCommand", "type": "Outport"}
   ],
   "connections": [
-    {"source": "SetPoint/1", "destination": "ProportionalGain/1"},
-    {"source": "ProportionalGain/1", "destination": "Output/1"}
+    {"source": "SpeedCommand/1", "destination": "ErrorCalculation/1"},
+    {"source": "CurrentSpeed/1", "destination": "ErrorCalculation/2"},
+    {"source": "ErrorCalculation/1", "destination": "Proportional/1"},
+    {"source": "ErrorCalculation/1", "destination": "Integral/1"},
+    {"source": "ErrorCalculation/1", "destination": "Derivative/1"},
+    {"source": "Proportional/1", "destination": "PID_Sum/1"},
+    {"source": "Integral/1", "destination": "IntegralGain/1"},
+    {"source": "IntegralGain/1", "destination": "PID_Sum/2"},
+    {"source": "Derivative/1", "destination": "DerivativeGain/1"},
+    {"source": "DerivativeGain/1", "destination": "PID_Sum/3"},
+    {"source": "PID_Sum/1", "destination": "MotorCommand/1"}
   ]
 }
+
+MANDATORY JSON SCHEMA:
+{
+  "system_name": "Descriptive_System_Name",
+  "components": [
+    {
+      "name": "ComponentName",
+      "type": "Inport|Outport|Gain|Sum|Integrator|Subsystem|StateflowChart|Constant|Scope|Product|Switch|Saturation",
+      "parameters": {"Key": "Value"},
+      "position": [left, top, right, bottom]
+    }
+  ],
+  "connections": [
+    {
+      "source": "SourceComponent/1",
+      "destination": "DestinationComponent/1",
+      "label": "signal_name"
+    }
+  ]
+}
+
+CRITICAL INSTRUCTIONS:
+- Read the ENTIRE document to understand system scope
+- Identify ALL functional requirements
+- Create components for EACH requirement
+- Connect components to show complete signal flow
+- Include control logic, math operations, and data processing
+- Use clear, requirement-based naming
+
+MINIMUM OUTPUT: 4-8 components covering all major requirements with complete signal flow!
 """
+
+def detect_input_type(uploaded_files):
+    """
+    Detects whether uploaded files are code or requirements based on extensions.
+    Returns: 'code' or 'requirements'
+    """
+    if not uploaded_files:
+        return 'requirements'
+    
+    code_extensions = {'.c', '.cpp', '.h', '.hpp', '.cc', '.cxx'}
+    req_extensions = {'.pdf', '.docx', '.doc', '.txt', '.md'}
+    
+    code_count = 0
+    req_count = 0
+    
+    for file in uploaded_files:
+        ext = '.' + file.name.split('.')[-1].lower()
+        if ext in code_extensions:
+            code_count += 1
+        elif ext in req_extensions:
+            req_count += 1
+    
+    # If more code files, use code prompt
+    if code_count > req_count:
+        return 'code'
+    else:
+        return 'requirements'
 
 def extract_json_from_text(text):
     """
@@ -633,9 +843,15 @@ with tab1:
         generate_button = st.button("🚀 Generate Architecture", type="primary", use_container_width=True)
     with col2:
         if st.button("🗑️ Clear", use_container_width=True):
+            # Clear session state
+            if 'last_generation' in st.session_state:
+                del st.session_state['last_generation']
             st.rerun()
     
     if generate_button:
+        # Clear old results when starting new generation
+        if 'last_generation' in st.session_state:
+            del st.session_state['last_generation']
         if not uploaded_files:
             st.error("⚠️ Please upload files first!")
         else:
@@ -648,11 +864,22 @@ with tab1:
             status_text = st.empty()
             
             # Read files
-            for i, f in enumerate(uploaded_files):
-                status_text.text(f"📖 Reading {f.name}...")
-                text = read_file_content(f)
-                user_data += f"\n// FILE: {f.name}\n{text}\n"
+            total_chars = 0
+            # Detect input type and select appropriate prompt
+            input_type = detect_input_type(uploaded_files)
+            
+            if st.session_state.get('debug_mode'):
+                st.info(f"📂 Detected input type: **{input_type.upper()}**")
+            
+            status_text.text(f"🤖 Generating architecture with AI ({input_type} analysis)...")
+            
+            with st.spinner(f"Architecting with {st.session_state['active_model']}..."):
+                json_result = get_ai_response(user_data, input_type=input_type=======================\n// FILE: {f.name}\n// ==========================================\n{text}\n\n"
+                total_chars += len(text)
                 progress_bar.progress((i + 1) / len(uploaded_files))
+            
+            if st.session_state.get('debug_mode'):
+                st.info(f"📊 Read {len(uploaded_files)} files, {total_chars:,} characters total")
             
             status_text.text("🤖 Generating architecture with AI...")
             
@@ -662,10 +889,9 @@ with tab1:
                 if json_result:
                     status_text.text("🎨 Creating visualizations...")
                     
-                    try:
-                        mermaid_code = json_to_mermaid(json_result)
-                        matlab_code = json_to_matlab(json_result)
-                        json_str = json.dumps(json_result, indent=2)
+                    try:Validate outputs
+                        if not mermaid_code or mermaid_code.strip() == "graph LR":
+                            raise ValueError("Generated empty Mermaid diagram")
                         
                         # Store in session
                         st.session_state['last_generation'] = {
@@ -673,7 +899,13 @@ with tab1:
                             'mermaid': mermaid_code,
                             'matlab': matlab_code,
                             'json_str': json_str,
-                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'file_count': len(uploaded_files)
+                        }
+                        
+                        progress_bar.progress(100)
+                        status_text.empty()
+                        st.success(f"✅ Architecture generated from {len(uploaded_files)} filesd %H:%M:%S')
                         }
                         
                         progress_bar.progress(100)
@@ -728,7 +960,9 @@ with tab1:
                             st.exception(e)
                 else:
                     progress_bar.empty()
-                    status_text.empty()
+        gen = st.session_state['last_generation']
+        file_info = f" ({gen.get('file_count', 0)} files)" if 'file_count' in gen else ""
+        st.info(f"ℹ️ Showing last generation from {gen['timestamp']}{file_info
                     st.error("❌ Failed to generate architecture. Please check your input and try again.")
     
     # Show last generation if available
