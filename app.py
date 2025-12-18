@@ -910,12 +910,7 @@ with tab1:
                         
                         progress_bar.progress(100)
                         status_text.empty()
-                        st.success(f"✅ Architecture generated from {len(uploaded_files)} filesd %H:%M:%S')
-                        }
-                        
-                        progress_bar.progress(100)
-                        status_text.empty()
-                        st.success("✅ Architecture generated successfully!")
+                        st.success(f"✅ Architecture generated from {len(uploaded_files)} files!")
                         
                         # Display results
                         st.markdown("---")
@@ -965,9 +960,6 @@ with tab1:
                             st.exception(e)
                 else:
                     progress_bar.empty()
-        gen = st.session_state['last_generation']
-        file_info = f" ({gen.get('file_count', 0)} files)" if 'file_count' in gen else ""
-        st.info(f"ℹ️ Showing last generation from {gen['timestamp']}{file_info
                     st.error("❌ Failed to generate architecture. Please check your input and try again.")
     
     # Show last generation if available
