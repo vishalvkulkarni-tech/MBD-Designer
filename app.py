@@ -75,7 +75,7 @@ def render_mermaid_ui(mermaid_code):
     except Exception:
         st.warning("Could not render visual diagram. Please view the code below.")
     
-    with st.expander("🔍 View Diagram Code"):
+    with st.expander("🔍 View Diagram Code (Debug)"):
         st.code(mermaid_code, language='mermaid')
 
 # ==========================================
@@ -100,10 +100,16 @@ def read_file_content(uploaded_file):
 # ==========================================
 def sanitize_id(text):
     """
-    Removes spaces and special characters to create a valid Mermaid ID.
-    Example: "Input Signal" -> "InputSignal"
+    CRITICAL FIX: 
+    1. Removes special chars.
+    2. Adds 'id_' prefix to ensure it never starts with a number or matches a keyword like 'End'.
     """
-    return re.sub(r'[^a-zA-Z0-9]', '', text)
+    clean_text = re.sub(r'[^a-zA-Z0-9]', '', text)
+    return f"id_{clean_text}"
+
+def sanitize_label(text):
+    """Escapes double quotes to prevent breaking the Mermaid string."""
+    return text.replace('"', "'")
 
 def json_to_mermaid(data):
     mermaid_lines = ["graph LR"]
@@ -111,22 +117,23 @@ def json_to_mermaid(data):
     # Nodes
     for comp in data.get('components', []):
         raw_name = comp['name']
-        safe_id = sanitize_id(raw_name)  # Clean ID for internal use
+        safe_id = sanitize_id(raw_name)  # Unique ID
+        label = sanitize_label(raw_name) # Human readable label
         ctype = comp['type']
         
         # Format: SafeID["Readable Name"]
         if ctype == "Subsystem":
-            mermaid_lines.append(f'    {safe_id}(("{raw_name}<br/>Subsystem"))')
+            mermaid_lines.append(f'    {safe_id}(("{label}<br/>Subsystem"))')
         elif ctype == "ModelReference":
-            mermaid_lines.append(f'    {safe_id}[["{raw_name}<br/>ModelRef"]]')
+            mermaid_lines.append(f'    {safe_id}[["{label}<br/>ModelRef"]]')
         elif ctype == "StateflowChart":
-            mermaid_lines.append(f'    {safe_id}{{ "{raw_name}<br/>Stateflow" }}')
+            mermaid_lines.append(f'    {safe_id}{{ "{label}<br/>Stateflow" }}')
         elif ctype == "Inport":
-            mermaid_lines.append(f'    {safe_id}(["{raw_name} >"])')
+            mermaid_lines.append(f'    {safe_id}(["{label} >"])')
         elif ctype == "Outport":
-            mermaid_lines.append(f'    {safe_id}((["> {raw_name}"]))')
+            mermaid_lines.append(f'    {safe_id}((["> {label}"]))')
         else:
-            mermaid_lines.append(f'    {safe_id}["{raw_name}"]')
+            mermaid_lines.append(f'    {safe_id}["{label}"]')
 
     # Connections
     for conn in data.get('connections', []):
