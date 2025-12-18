@@ -865,6 +865,16 @@ with tab1:
             
             # Read files
             total_chars = 0
+            for i, f in enumerate(uploaded_files):
+                status_text.text(f"📖 Reading {f.name}...")
+                text = read_file_content(f)
+                user_data += f"\n// ==========================================\n// FILE: {f.name}\n// ==========================================\n{text}\n\n"
+                total_chars += len(text)
+                progress_bar.progress((i + 1) / len(uploaded_files))
+            
+            if st.session_state.get('debug_mode'):
+                st.info(f"📊 Read {len(uploaded_files)} files, {total_chars:,} characters total")
+            
             # Detect input type and select appropriate prompt
             input_type = detect_input_type(uploaded_files)
             
@@ -874,22 +884,17 @@ with tab1:
             status_text.text(f"🤖 Generating architecture with AI ({input_type} analysis)...")
             
             with st.spinner(f"Architecting with {st.session_state['active_model']}..."):
-                json_result = get_ai_response(user_data, input_type=input_type=======================\n// FILE: {f.name}\n// ==========================================\n{text}\n\n"
-                total_chars += len(text)
-                progress_bar.progress((i + 1) / len(uploaded_files))
-            
-            if st.session_state.get('debug_mode'):
-                st.info(f"📊 Read {len(uploaded_files)} files, {total_chars:,} characters total")
-            
-            status_text.text("🤖 Generating architecture with AI...")
-            
-            with st.spinner(f"Architecting with {st.session_state['active_model']}..."):
-                json_result = get_ai_response(user_data)
+                json_result = get_ai_response(user_data, input_type=input_type)
                 
                 if json_result:
                     status_text.text("🎨 Creating visualizations...")
                     
-                    try:Validate outputs
+                    try:
+                        mermaid_code = json_to_mermaid(json_result)
+                        matlab_code = json_to_matlab(json_result)
+                        json_str = json.dumps(json_result, indent=2)
+                        
+                        # Validate outputs
                         if not mermaid_code or mermaid_code.strip() == "graph LR":
                             raise ValueError("Generated empty Mermaid diagram")
                         
