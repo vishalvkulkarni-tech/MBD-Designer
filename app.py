@@ -587,34 +587,24 @@ HOW TO ANALYZE REQUIREMENTS:
 - Sensors/actuators mentioned → Inport/Outport
 - Data processing/filtering → Subsystem
 - Limit/saturation requirements → Saturation
-- Conditional logic → Switch or input_type='requirements', max_retries=3):
-    """
-    Enhanced AI response handler with retry logic and prompt selection based on input type.
-    """
-    model_name = st.session_state.get('active_model')
-    
-    # Select appropriate prompt based on input type
-    if input_type == 'code':
-        system_prompt = CODE_ANALYSIS_PROMPT
-        if st.session_state.get('debug_mode'):
-            st.info("🔧 Using CODE analysis prompt")
-    else:
-        system_prompt = REQUIREMENTS_PROMPT
-        if st.session_state.get('debug_mode'):
-            st.info("📋 Using REQUIREMENTS analysis prompt")
-    
-    for attempt in range(max_retries):
-        try:
-            model = genai.GenerativeModel(
-                model_name,
-                generation_config={
-                    "temperature": 0.3,  # Lower temperature for more consistent JSON
-                    "top_p": 0.95,
-                    "top_k": 40,
-                }
-            )
-            
-            full_prompt = system_prompt + "\n\nUSER INPUT DATA:\n" + user_input[:15000]  # Increased limit for code files
+- Conditional logic → Switch or StateflowChart
+- Constants/thresholds mentioned → Constant
+
+REQUIREMENTS EXAMPLE:
+"The system shall receive speed command and current speed. It shall calculate the error (command - current). 
+The error shall be processed by a PID controller with Kp=1.0, Ki=0.1, Kd=0.01 to generate motor command."
+
+EXTRACT:
+{
+  "system_name": "Speed_Control_System",
+  "components": [
+    {"name": "SpeedCommand", "type": "Inport"},
+    {"name": "CurrentSpeed", "type": "Inport"},
+    {"name": "ErrorCalculation", "type": "Sum", "parameters": {"Inputs": "+-"}},
+    {"name": "Proportional", "type": "Gain", "parameters": {"Gain": "1.0"}},
+    {"name": "Integral", "type": "Integrator"},
+    {"name": "IntegralGain", "type": "Gain", "parameters": {"Gain": "0.1"}},
+    {"name": "Derivative", "type": "Subsystem"},
     {"name": "DerivativeGain", "type": "Gain", "parameters": {"Gain": "0.01"}},
     {"name": "PID_Sum", "type": "Sum", "parameters": {"Inputs": "+++"}},
     {"name": "MotorCommand", "type": "Outport"}
@@ -724,11 +714,21 @@ def extract_json_from_text(text):
     
     return None
 
-def get_ai_response(user_input, max_retries=3):
+def get_ai_response(user_input, input_type='requirements', max_retries=3):
     """
-    Enhanced AI response handler with retry logic and better error handling.
+    Enhanced AI response handler with retry logic and prompt selection based on input type.
     """
     model_name = st.session_state.get('active_model')
+    
+    # Select appropriate prompt based on input type
+    if input_type == 'code':
+        system_prompt = CODE_ANALYSIS_PROMPT
+        if st.session_state.get('debug_mode'):
+            st.info("🔧 Using CODE analysis prompt")
+    else:
+        system_prompt = REQUIREMENTS_PROMPT
+        if st.session_state.get('debug_mode'):
+            st.info("📋 Using REQUIREMENTS analysis prompt")
     
     for attempt in range(max_retries):
         try:
@@ -741,64 +741,56 @@ def get_ai_response(user_input, max_retries=3):
                 }
             )
             
-            full_prompt = SYSTEM_PROMPT + "\n\nUSER INPUT DATA:\n" + user_input[:10000]  # Limit input size
-            
-            if st.session_state.get('debug_mode'):
-                st.info(f"🤖 Attempt {attempt + 1}/{max_retries} - Calling {model_name}")
-            
-            response = model.generate_content(full_prompt)
-            
-            if not response or not response.text:
-                raise ValueError("Empty response from AI model")
-            
-            # Extract JSON from response
-            json_data = extract_json_from_text(response.text)
-            
-            if not json_data:
-                raise ValueError("Could not extract valid JSON from response")
-            
-            # Validate structure
-            is_valid, error_msg = validate_json_structure(json_data)
-            if not is_valid:
-                raise ValueError(f"Invalid JSON structure: {error_msg}")
-            
-            # Success - store in history
-            st.session_state['generation_history'].append({
-                'timestamp': datetime.now().isoformat(),
-                'model': model_name,
-                'success': True,
-                'attempt': attempt + 1
-            })
-            
-            if st.session_state.get('debug_mode'):
-                st.success(f"✅ Successfully generated architecture on attempt {attempt + 1}")
-            
-            return json_data
-            
-        except json.JSONDecodeError as e:
-            error_msg = f"JSON Parse Error: {str(e)}"
-            if attempt < max_retries - 1:
-                st.warning(f"⚠️ {error_msg}. Retrying ({attempt + 1}/{max_retries})...")
-            else:
-                st.error(f"❌ {error_msg} after {max_retries} attempts")
-                
-        except Exception as e:
-            error_msg = f"AI Error: {str(e)}"
-            if attempt < max_retries - 1:
-                st.warning(f"⚠️ {error_msg}. Retrying ({attempt + 1}/{max_retries})...")
-            else:
-                st.error(f"❌ {error_msg} after {max_retries} attempts")
-                st.error("Please check:\n- API key validity\n- Input file content\n- Network connection")
-    
-    # All retries failed
-    st.session_state['generation_history'].append({
-        'timestamp': datetime.now().isoformat(),
-        'model': model_name,
-        'success': False,
-        'attempts': max_retries
-    })
-    
-    return None
+            full_prompt = system_prompt + "\n\nUSER INPUT DATA:\n" + user_input[:15000]  # Increased limit for code files
+    {"name": "DerivativeGain", "type": "Gain", "parameters": {"Gain": "0.01"}},
+    {"name": "PID_Sum", "type": "Sum", "parameters": {"Inputs": "+++"}},
+    {"name": "MotorCommand", "type": "Outport"}
+  ],
+  "connections": [
+    {"source": "SpeedCommand/1", "destination": "ErrorCalculation/1"},
+    {"source": "CurrentSpeed/1", "destination": "ErrorCalculation/2"},
+    {"source": "ErrorCalculation/1", "destination": "Proportional/1"},
+    {"source": "ErrorCalculation/1", "destination": "Integral/1"},
+    {"source": "ErrorCalculation/1", "destination": "Derivative/1"},
+    {"source": "Proportional/1", "destination": "PID_Sum/1"},
+    {"source": "Integral/1", "destination": "IntegralGain/1"},
+    {"source": "IntegralGain/1", "destination": "PID_Sum/2"},
+    {"source": "Derivative/1", "destination": "DerivativeGain/1"},
+    {"source": "DerivativeGain/1", "destination": "PID_Sum/3"},
+    {"source": "PID_Sum/1", "destination": "MotorCommand/1"}
+  ]
+}
+
+MANDATORY JSON SCHEMA:
+{
+  "system_name": "Descriptive_System_Name",
+  "components": [
+    {
+      "name": "ComponentName",
+      "type": "Inport|Outport|Gain|Sum|Integrator|Subsystem|StateflowChart|Constant|Scope|Product|Switch|Saturation",
+      "parameters": {"Key": "Value"},
+      "position": [left, top, right, bottom]
+    }
+  ],
+  "connections": [
+    {
+      "source": "SourceComponent/1",
+      "destination": "DestinationComponent/1",
+      "label": "signal_name"
+    }
+  ]
+}
+
+CRITICAL INSTRUCTIONS:
+- Read the ENTIRE document to understand system scope
+- Identify ALL functional requirements
+- Create components for EACH requirement
+- Connect components to show complete signal flow
+- Include control logic, math operations, and data processing
+- Use clear, requirement-based naming
+
+MINIMUM OUTPUT: 4-8 components covering all major requirements with complete signal flow!
+"""
 
 # ==========================================
 # 7. FRONTEND UI
