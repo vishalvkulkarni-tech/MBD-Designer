@@ -799,19 +799,6 @@ def get_ai_response(user_input, input_type='requirements', max_retries=3):
     })
     
     return None
-  ]
-}
-
-CRITICAL INSTRUCTIONS:
-- Read the ENTIRE document to understand system scope
-- Identify ALL functional requirements
-- Create components for EACH requirement
-- Connect components to show complete signal flow
-- Include control logic, math operations, and data processing
-- Use clear, requirement-based naming
-
-MINIMUM OUTPUT: 4-8 components covering all major requirements with complete signal flow!
-"""
 
 # ==========================================
 # 7. FRONTEND UI
